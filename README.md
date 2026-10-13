@@ -39,7 +39,7 @@ queueworks fixtures
 queueworks demo --workers 3 --jobs 12
 ```
 
-If local execution policy prevents activation, invoke `.\.venv\Scripts\python.exe` and `.\.venv\Scripts\queueworks.exe` directly. Direct dependency versions are pinned in `pyproject.toml`; `requirements-lock.txt` constrains the complete resolved runtime/development environment used for local verification (Python 3.12.14 on Windows). The runtime dependencies are FastAPI, Uvicorn, HTTPX, and Pillow; pytest and Ruff are development dependencies. SQLite comes with Python. Use the constraint file with installation as shown above. Python 3.11/3.12 portability checks are configured in GitHub Actions and remain pending until that workflow runs.
+If local execution policy prevents activation, invoke `.\.venv\Scripts\python.exe` and `.\.venv\Scripts\queueworks.exe` directly. Direct dependency versions are pinned in `pyproject.toml`; `requirements-lock.txt` constrains the complete resolved runtime/development environment used for local verification (Python 3.12.14 on Windows). The runtime dependencies are FastAPI, Uvicorn, HTTPX, and Pillow; pytest and Ruff are development dependencies. SQLite comes with Python. Use the constraint file with installation as shown above. The [verified GitHub Actions run](https://github.com/ChenJY06/queueworks/actions/runs/38368363662) passed installation, tests, and Ruff checks on Linux with Python 3.11 and 3.12.
 
 The demo owns its coordinator and worker subprocesses and cleans them up. It creates an isolated run directory, submits jobs, waits for a worker to own a running job, terminates that worker, and observes lease expiry and recovery. The selection of the crash moment uses observed job state rather than a fixed sleep.
 
@@ -137,7 +137,7 @@ python -m ruff format --check .
 
 Tests cover API validation and pagination, atomic idempotency, controlled-time lease renewal and expiry, retry limits, stale-token rejection, and repeatable handlers. Process integration tests exercise actual HTTP requests and SQLite with independent workers, concurrent claims, coordinator restart, and hard worker termination. Polling is bounded and observes state instead of selecting failure moments with blind sleeps.
 
-The GitHub Actions workflow runs the same commands on supported Python versions. Local verification is recorded below; a GitHub CI result exists only after the workflow runs in your repository.
+The GitHub Actions workflow runs the same commands on Python 3.11 and 3.12. Both matrix jobs passed in the [recorded CI run](https://github.com/ChenJY06/queueworks/actions/runs/38368363662) for implementation commit `e8e4360`. Local verification is recorded below.
 
 ## Benchmarks
 
@@ -162,7 +162,7 @@ The sequential reference calls the same handlers without HTTP, durable queue wri
 
 ### Verified local results
 
-Verified locally on 13 October 2026 with Python 3.12.14, Windows 11, and an Intel Core i9-14900HX (32 logical CPUs): **44 tests passed, 1 skipped** in 46.68 seconds. The skip covers POSIX SIGTERM on Windows; the Windows Ctrl+Break graceful-shutdown test passed. Ruff lint and formatting checks passed for all 15 Python files, and `pip check` found no broken requirements. pytest emitted one upstream Starlette/AnyIO deprecation warning. These are local results; GitHub Actions has not run and Docker is unavailable.
+Verified locally on 13 October 2026 with Python 3.12.14, Windows 11, and an Intel Core i9-14900HX (32 logical CPUs): **44 tests passed, 1 skipped** in 46.68 seconds. The skip covers POSIX SIGTERM on Windows; the Windows Ctrl+Break graceful-shutdown test passed. Ruff lint and formatting checks passed for all 15 Python files, and `pip check` found no broken requirements. pytest emitted one upstream Starlette/AnyIO deprecation warning. The pre-publication test rerun also passed in 39.84 seconds. GitHub Actions subsequently passed on Linux with Python 3.11 and 3.12. Docker remains unavailable and its configuration unverified.
 
 The three-worker crash demo completed **12/12 accepted jobs**. It killed the observed owner, `worker-3`, while its selected job was running. That job was reclaimed 5.850 seconds after termination and completed after 6.988 seconds, with two attempts and one successful state transition. All demo processes were cleaned up. The [small recorded evidence](benchmarks/results/crash-demo-summary.json) and [verification record](docs/verification.md) document the run. Recovery includes lease expiry, backoff, surviving-worker queue wait, and handler execution; it is not a fixed lease-duration promise.
 

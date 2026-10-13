@@ -1,6 +1,6 @@
 # Local verification record
 
-The implementation was verified on **13 October 2026**, using Python 3.12.14 on Windows 11 (`Windows-11-10.0.26300-SP0`). The CPU was an Intel Core i9-14900HX with 32 logical CPUs. Installation used the resolved versions in `requirements-lock.txt`. This document records local execution, not a GitHub Actions result or production deployment.
+The implementation was verified on **13 October 2026**, using Python 3.12.14 on Windows 11 (`Windows-11-10.0.26300-SP0`). The CPU was an Intel Core i9-14900HX with 32 logical CPUs. Installation used the resolved versions in `requirements-lock.txt`. This document records local execution and the later GitHub CI checks. Production deployment has not been performed.
 
 ## Checks
 
@@ -20,7 +20,7 @@ From the repository root in the installed virtual environment:
 | Ruff formatting | All 15 Python files already formatted. |
 | Dependency consistency | No broken requirements found. |
 
-The skipped test checks POSIX SIGTERM behavior and is inapplicable on Windows, where `terminate()` is a hard kill. The Windows Ctrl+Break process test passed and exercised bounded graceful cleanup and subsequent recovery. pytest reported one upstream Starlette/AnyIO deprecation warning. Linux/Python 3.11 and 3.12 checks are configured in `.github/workflows/ci.yml`; their GitHub execution remains pending.
+The skipped test checks POSIX SIGTERM behavior and is inapplicable on Windows, where `terminate()` is a hard kill. The Windows Ctrl+Break process test passed and exercised bounded graceful cleanup and subsequent recovery. pytest reported one upstream Starlette/AnyIO deprecation warning. Linux/Python 3.11 and 3.12 checks are configured in `.github/workflows/ci.yml` and passed in the recorded GitHub Actions run below.
 
 The suite exercises the actual HTTP/SQLite path for API requests, concurrent claims, retry success and attempt-limit failure, stale update rejection, lease renewal, coordinator restart, hard worker termination, and graceful worker cancellation. Controlled coordinator time checks lease deadlines and capped backoff without waiting for real intervals. Handler tests verify deterministic fixture generation and repeated output, including thumbnail replacement and path boundaries.
 
@@ -58,3 +58,5 @@ Docker was not installed in this environment. The Dockerfile and Compose configu
 ## Publication checks
 
 The destination repository is [ChenJY06/queueworks](https://github.com/ChenJY06/queueworks). Before publication, a fresh local run passed **44 tests, with one POSIX-only skip and one upstream deprecation warning, in 39.84 seconds**. Ruff lint, formatting of all 15 Python files, and dependency consistency checks passed again. A file audit confirmed that the commit contains only QueueWorks source, tests, documentation, packaging, CI configuration, and small benchmark summaries. Runtime data, virtual environments, generated thumbnails, and large raw benchmark outputs remain ignored. GitHub Actions status is separate from these local checks.
+
+Implementation commit [e8e4360](https://github.com/ChenJY06/queueworks/commit/e8e43603955779aedbc030f386698279172462a0) was published using a normal fast-forward update to `main`. The [GitHub Actions run](https://github.com/ChenJY06/queueworks/actions/runs/38368363662) completed successfully: both Linux jobs, Python 3.11 and Python 3.12, passed dependency installation, Ruff lint, Ruff formatting, and pytest. The local checkout was synchronized with the published commit. No force-push was used.
