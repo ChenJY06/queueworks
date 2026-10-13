@@ -1,0 +1,59 @@
+services:
+  coordinator:
+    build: .
+    command: ["/bin/sh", "-c", "queueworks fixtures && exec queueworks serve --host 0.0.0.0 --port 8000"]
+    environment:
+      QUEUEWORKS_DB_PATH: /var/lib/queueworks/queueworks.sqlite3
+      QUEUEWORKS_DATA_DIR: /data
+      QUEUEWORKS_WORKER_KEY: ${QUEUEWORKS_WORKER_KEY:-}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - database:/var/lib/queueworks
+      - data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+    stop_grace_period: 15s
+
+  worker-1:
+    build: .
+    command: ["queueworks", "worker", "--url", "http://coordinator:8000"]
+    environment: &worker-environment
+      QUEUEWORKS_DATA_DIR: /data
+      QUEUEWORKS_WORKER_KEY: ${QUEUEWORKS_WORKER_KEY:-}
+    volumes:
+      - data:/data
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    stop_grace_period: 15s
+
+  worker-2:
+    build: .
+    command: ["queueworks", "worker", "--url", "http://coordinator:8000"]
+    environment: *worker-environment
+    volumes:
+      - data:/data
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    stop_grace_period: 15s
+
+  worker-3:
+    build: .
+    command: ["queueworks", "worker", "--url", "http://coordinator:8000"]
+    environment: *worker-environment
+    volumes:
+      - data:/data
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    stop_grace_period: 15s
+
+volumes:
+  database:
+  data:

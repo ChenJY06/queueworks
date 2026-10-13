@@ -1,0 +1,40 @@
+# Python and local environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local secrets and IDE/OS metadata
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Runtime database, WAL sidecars, fixture generation, and thumbnail outputs
+runtime/
+data/
+artifacts/
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db
+*.db-wal
+*.db-shm
+
+# Raw benchmark runs can grow large. Small reviewed summaries live elsewhere.
+benchmarks/runs/
+
+# Temporary logs and local reports
+*.log
+*.tmp

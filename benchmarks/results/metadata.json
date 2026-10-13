@@ -1,0 +1,74 @@
+{
+  "complete": true,
+  "measured_at_utc": "2026-10-13T07:56:32Z",
+  "os": "Windows-11-10.0.26300-SP0",
+  "processor": "Intel(R) Core(TM) i9-14900HX",
+  "logical_cpus": 32,
+  "python": "3.12.14",
+  "workers": [
+    1,
+    2,
+    4
+  ],
+  "jobs_per_run": 24,
+  "warmup_jobs": 4,
+  "repetitions": 2,
+  "synthetic_duration_ms": 100,
+  "synthetic_iterations": 0,
+  "lease_seconds": 1.5,
+  "retry_base_seconds": 0.05,
+  "retry_cap_seconds": 1,
+  "reaper_interval_seconds": 0.05,
+  "sqlite": "WAL, synchronous FULL; see docs/design.md",
+  "sqlite_runtime_version": "3.53.1",
+  "sqlite_busy_timeout_ms": 5000,
+  "worker_poll_interval_seconds": 0.1,
+  "worker_request_timeout_seconds": 2,
+  "max_attempts": 3,
+  "memory_usage": "not measured",
+  "handler_timer": {
+    "clock": "perf_counter",
+    "implementation": "QueryPerformanceCounter()",
+    "resolution_seconds": 1e-07
+  },
+  "wall_clock": {
+    "implementation": "GetSystemTimeAsFileTime()",
+    "resolution_seconds": 0.015625
+  },
+  "workloads": [
+    "realistic",
+    "synthetic"
+  ],
+  "fixture_sizes_bytes": {
+    "sample.bin": 2097152,
+    "sample.png": 4523
+  },
+  "reproduction_arguments": [
+    "python",
+    "-m",
+    "queueworks",
+    "benchmark",
+    "--workload",
+    "all",
+    "--workers",
+    "1",
+    "2",
+    "4",
+    "--jobs",
+    "24",
+    "--repetitions",
+    "2",
+    "--warmup",
+    "4",
+    "--duration-ms",
+    "100",
+    "--iterations",
+    "0",
+    "--lease-seconds",
+    "1.5",
+    "--data-dir",
+    "data",
+    "--output-dir",
+    "benchmarks\\runs\\verified"
+  ]
+}

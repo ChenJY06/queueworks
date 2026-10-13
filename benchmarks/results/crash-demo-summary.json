@@ -1,0 +1,18 @@
+{
+  "job_id": "b8ffe775-a52d-43cb-94ab-2cbfe84b2beb",
+  "worker_id": "worker-3",
+  "worker_pid": 22504,
+  "observed_running_at": 1791877459.7404287,
+  "killed_at": 1791877459.7404287,
+  "reclaimed_at": 1791877465.590015,
+  "completed_at": 1791877466.7287576,
+  "reclaim_seconds": 5.849586248397827,
+  "recovery_seconds": 6.98832893371582,
+  "attempt_count": 2,
+  "successful_state_transitions": 1,
+  "accepted_jobs": 12,
+  "succeeded_jobs": 12,
+  "replacement_started": false,
+  "processes_cleaned_up": true,
+  "architecture": "one coordinator, one SQLite database, independent HTTP workers"
+}

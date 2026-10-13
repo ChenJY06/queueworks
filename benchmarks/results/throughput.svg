@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="390" viewBox="0 0 780 390">
+<rect width="100%" height="100%" fill="white"/>
+<g font-family="sans-serif" font-size="12" fill="#172033">
+<text x="40" y="27" font-size="18">Successful completions per second (each repetition)</text>
+<path d="M75 50 V315 H760" fill="none" stroke="#555"/>
+<text x="67" y="319.0" text-anchor="end">0.0</text>
+<path d="M75 315.0 H760" stroke="#eee"/>
+<text x="67" y="266.0" text-anchor="end">7.9</text>
+<path d="M75 262.0 H760" stroke="#eee"/>
+<text x="67" y="213.0" text-anchor="end">15.8</text>
+<path d="M75 209.0 H760" stroke="#eee"/>
+<text x="67" y="160.0" text-anchor="end">23.8</text>
+<path d="M75 156.0 H760" stroke="#eee"/>
+<text x="67" y="107.0" text-anchor="end">31.7</text>
+<path d="M75 103.0 H760" stroke="#eee"/>
+<text x="67" y="54.0" text-anchor="end">39.6</text>
+<path d="M75 50.0 H760" stroke="#eee"/>
+<rect x="82.0" y="201.2" width="38.5" height="113.8" fill="#3479ab"/>
+<text x="82.0" y="333">1w r1</text>
+<rect x="134.5" y="132.9" width="38.5" height="182.1" fill="#3479ab"/>
+<text x="134.5" y="333">2w r1</text>
+<rect x="187.0" y="141.6" width="38.5" height="173.4" fill="#3479ab"/>
+<text x="187.0" y="333">4w r1</text>
+<rect x="239.5" y="200.9" width="38.5" height="114.1" fill="#3479ab"/>
+<text x="239.5" y="333">1w r2</text>
+<rect x="292.0" y="141.5" width="38.5" height="173.5" fill="#3479ab"/>
+<text x="292.0" y="333">2w r2</text>
+<rect x="344.5" y="84.6" width="38.5" height="230.4" fill="#3479ab"/>
+<text x="344.5" y="333">4w r2</text>
+<rect x="397.0" y="271.2" width="38.5" height="43.8" fill="#e18532"/>
+<text x="397.0" y="333">1w r1</text>
+<rect x="449.5" y="234.2" width="38.5" height="80.8" fill="#e18532"/>
+<text x="449.5" y="333">2w r1</text>
+<rect x="502.0" y="159.5" width="38.5" height="155.5" fill="#e18532"/>
+<text x="502.0" y="333">4w r1</text>
+<rect x="554.5" y="271.4" width="38.5" height="43.6" fill="#e18532"/>
+<text x="554.5" y="333">1w r2</text>
+<rect x="607.0" y="228.7" width="38.5" height="86.3" fill="#e18532"/>
+<text x="607.0" y="333">2w r2</text>
+<rect x="659.5" y="188.9" width="38.5" height="126.1" fill="#e18532"/>
+<text x="659.5" y="333">4w r2</text>
+<text x="75" y="370">Blue: checksum/thumbnail | Orange: synthetic | No speedup assumed</text>
+</g></svg>
