@@ -55,8 +55,8 @@ The [report](../benchmarks/results/report.md) includes each repetition's latency
 
 Docker was not installed in this environment. The Dockerfile and Compose configuration are provided but **container execution remains unverified**. Verify locally with `docker compose up --build`, a submission, inspection of terminal results, and `docker compose down`.
 
-## Publication checks
+## Continuous integration
 
-The destination repository is [ChenJY06/queueworks](https://github.com/ChenJY06/queueworks). Before publication, a fresh local run passed **44 tests, with one POSIX-only skip and one upstream deprecation warning, in 39.84 seconds**. Ruff lint, formatting of all 15 Python files, and dependency consistency checks passed again. A file audit confirmed that the commit contains only QueueWorks source, tests, documentation, packaging, CI configuration, and small benchmark summaries. Runtime data, virtual environments, generated thumbnails, and large raw benchmark outputs remain ignored. GitHub Actions status is separate from these local checks.
+An additional local run passed **44 tests, with one POSIX-only skip and one upstream deprecation warning, in 39.84 seconds**. Ruff lint, formatting of all 15 Python files, and dependency consistency checks also passed.
 
-Implementation commit [e8e4360](https://github.com/ChenJY06/queueworks/commit/e8e43603955779aedbc030f386698279172462a0) was published using a normal fast-forward update to `main`. The [GitHub Actions run](https://github.com/ChenJY06/queueworks/actions/runs/38368363662) completed successfully: both Linux jobs, Python 3.11 and Python 3.12, passed dependency installation, Ruff lint, Ruff formatting, and pytest. The local checkout was synchronized with the published commit. No force-push was used.
+The [GitHub Actions run](https://github.com/ChenJY06/queueworks/actions/runs/38368363662) for implementation commit [e8e4360](https://github.com/ChenJY06/queueworks/commit/e8e43603955779aedbc030f386698279172462a0) completed successfully. Both Linux jobs, Python 3.11 and Python 3.12, passed dependency installation, Ruff lint, Ruff formatting, and pytest.

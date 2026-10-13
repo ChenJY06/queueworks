@@ -2,9 +2,9 @@
 
 QueueWorks is a durable background job queue built with Python, FastAPI, and SQLite. An HTTP coordinator accepts jobs and records their state. Independent worker processes claim jobs over HTTP and run file checksum, image thumbnail, or bounded synthetic handlers.
 
-This is a substantial learning project for understanding transactions, process concurrency, leases, retries, testing, and measurement. Its demonstration runs on one machine. It uses one coordinator and one SQLite database; it is not a replicated database or a consensus system.
+QueueWorks runs a single coordinator with a persistent SQLite database and multiple independent HTTP workers. It supports single-machine deployments with explicit lease ownership, bounded retries, and durable attempt history. Replication and consensus are outside its scope.
 
-## What works
+## Features
 
 - Validated submission, job inspection, bounded listing, and database readiness endpoints.
 - Atomic claims, an expiring lease, a unique token for each attempt, and heartbeats during handler execution.
@@ -43,7 +43,7 @@ If local execution policy prevents activation, invoke `.\.venv\Scripts\python.ex
 
 The demo owns its coordinator and worker subprocesses and cleans them up. It creates an isolated run directory, submits jobs, waits for a worker to own a running job, terminates that worker, and observes lease expiry and recovery. The selection of the crash moment uses observed job state rather than a fixed sleep.
 
-## Run the components yourself
+## Manual deployment
 
 Generate fixtures once, then open separate terminals in the activated environment:
 
@@ -185,7 +185,7 @@ Read the [per-run report and plots](benchmarks/results/report.md), [CSV](benchma
 
 ## Docker Compose
 
-Docker was not available in the implementation environment, so this configuration has not been run locally. Verify it with the commands below before presenting container execution as tested.
+The Dockerfile and Compose configuration are provided for container deployment. Container execution has not been verified locally because Docker was unavailable.
 
 ```sh
 docker compose up --build
@@ -201,9 +201,12 @@ docker compose down
 
 `docker compose down` preserves named volumes. `docker compose down --volumes` intentionally deletes the demonstration database and data. The configuration supplies one coordinator process; do not scale the coordinator into multiple independent database copies.
 
-## Study the implementation
+## Documentation
 
-Start with the [learning guide](docs/learning-guide.md), then read the model definitions, storage transactions, HTTP endpoints, worker loop, and handlers in that order. The [design document](docs/design.md) explains invariants and trade-offs; [interview notes](docs/interview-notes.md) connect questions to the actual code. [CV notes](docs/cv-notes.md) contain locally verified project bullets, and the [verification record](docs/verification.md) states exactly what was exercised.
+- [Design](docs/design.md): schema, state transitions, concurrency, lease fencing, and durability.
+- [Implementation](docs/implementation.md): request flow and source-module responsibilities.
+- [Technical FAQ](docs/faq.md): delivery semantics, failure recovery, and deployment trade-offs.
+- [Verification](docs/verification.md): test coverage, crash recovery evidence, and measured results.
 
 ```text
 queueworks/
@@ -224,7 +227,7 @@ queueworks/
 │   ├── test_worker.py      # Bounded shutdown and signal recovery
 │   ├── test_process_integration.py # Concurrent claims, crashes, restart
 │   └── process_helpers.py
-├── docs/                  # Design, learning, interview, CV, verification
+├── docs/                  # Design, implementation, FAQ, verification
 ├── benchmarks/results/    # Small reviewed local measurement summaries
 ├── .github/workflows/ci.yml
 ├── pyproject.toml
@@ -251,7 +254,7 @@ On systems with Make, `make check`, `make demo`, and `make benchmark` are shortc
 
 ## Repository
 
-The destination is [ChenJY06/queueworks](https://github.com/ChenJY06/queueworks). Runtime databases, virtual environments, generated thumbnails, and large benchmark outputs are ignored. The repository includes an MIT license for the original project.
+Source is available at [ChenJY06/queueworks](https://github.com/ChenJY06/queueworks) under the MIT license. Runtime databases, virtual environments, generated thumbnails, and large benchmark outputs are excluded from version control.
 
 ```sh
 git status --short
