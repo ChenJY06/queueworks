@@ -1,4 +1,4 @@
-"""Explicit coordinator configuration; workers do not import the storage layer."""
+"""Coordinator settings and environment validation."""
 
 import math
 import os

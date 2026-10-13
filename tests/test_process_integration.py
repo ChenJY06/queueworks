@@ -22,8 +22,7 @@ def running_job(cluster, job_id):
 
 
 def test_concurrent_real_workers_claim_distinct_attempts(tmp_path):
-    # This checks claim isolation, not expiry; leave ample budget for scheduling
-    # on a loaded CI host. Separate tests deliberately use short leases.
+    # Allow CI scheduling delays when checking claim isolation; expiry has separate tests.
     with ProcessCluster(tmp_path, lease_seconds=5.0) as cluster:
         cluster.start_workers(3)
         ids = [cluster.submit(synthetic(250))["id"] for _ in range(12)]

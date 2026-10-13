@@ -1,6 +1,6 @@
-# Local verification record
+# Verification
 
-The implementation was verified on **13 October 2026**, using Python 3.12.14 on Windows 11 (`Windows-11-10.0.26300-SP0`). The CPU was an Intel Core i9-14900HX with 32 logical CPUs. Installation used the resolved versions in `requirements-lock.txt`. This document records local execution and the later GitHub CI checks. Production deployment has not been performed.
+Recorded on **13 October 2026** with Python 3.12.14, Windows 11 (`Windows-11-10.0.26300-SP0`), and an Intel Core i9-14900HX with 32 logical CPUs. Installation used `requirements-lock.txt`. These records cover local execution and GitHub CI; production deployment has not been verified.
 
 ## Checks
 
@@ -22,7 +22,7 @@ From the repository root in the installed virtual environment:
 
 The skipped test checks POSIX SIGTERM behavior and is inapplicable on Windows, where `terminate()` is a hard kill. The Windows Ctrl+Break process test passed and exercised bounded graceful cleanup and subsequent recovery. pytest reported one upstream Starlette/AnyIO deprecation warning. Linux/Python 3.11 and 3.12 checks are configured in `.github/workflows/ci.yml` and passed in the recorded GitHub Actions run below.
 
-The suite exercises the actual HTTP/SQLite path for API requests, concurrent claims, retry success and attempt-limit failure, stale update rejection, lease renewal, coordinator restart, hard worker termination, and graceful worker cancellation. Controlled coordinator time checks lease deadlines and capped backoff without waiting for real intervals. Handler tests verify deterministic fixture generation and repeated output, including thumbnail replacement and path boundaries.
+Coverage is mapped to test files in [implementation](implementation.md#tests-and-experiments). API tests use real SQLite with controlled scheduling time; integration tests exercise HTTP and independent processes.
 
 ## Crash demonstration
 
@@ -32,28 +32,21 @@ The suite exercises the actual HTTP/SQLite path for API requests, concurrent cla
 
 The tool observed `worker-3` owning a running job before killing its process. All **12 accepted jobs succeeded**. The selected job had two attempts—an expired attempt and a successful retry—and exactly one successful state transition. It was reclaimed **5.850 seconds** after termination and durably completed **6.988 seconds** after termination. The tool cleaned up all coordinator and worker processes.
 
-The [small retained summary](../benchmarks/results/crash-demo-summary.json) is copied directly from the demonstration's evidence, excluding the full job list. Full local evidence and diagnostic logs are in `artifacts/demo/crash-demo.json` and adjacent logs; those generated artifacts are ignored by Git. This recovery time includes work already queued on surviving workers as well as lease expiry, retry delay, claim time, and handler execution. It is an observation of this configuration, not a recovery-time guarantee.
+The [retained summary](../benchmarks/results/crash-demo-summary.json) excludes the full job list. Full local evidence is in ignored `artifacts/demo/crash-demo.json` and adjacent logs. Recovery includes backlog on surviving workers, lease expiry, retry delay, claim time, and handler execution.
 
-## Benchmarks and remaining limits
+## Benchmark evidence
 
-The completed benchmark compared 1, 2, and 4 workers on both configured workloads, using 24 identical inputs per run, four excluded warm-up jobs, and two repetitions. All 288 measured queued jobs succeeded, with zero failures and zero retries; the direct sequential reference completed 96 executions. Twelve separate crash probes completed all 28 accepted probe jobs. Each selected probe job had two attempts and one successful state transition, with termination-to-success recovery between 2.645 and 2.818 seconds. Those probe retries are excluded from workload throughput and retry counts.
+The benchmark compared 1, 2, and 4 workers on both workloads: 24 jobs per run, four excluded warm-up jobs, and two repetitions. All 288 measured queue jobs succeeded without failures or retries. The direct reference completed 96 executions. Twelve separate crash probes completed all 28 probe jobs; selected jobs had two attempts and one successful transition, recovering in 2.645–2.818 seconds. Probe retries are excluded from workload throughput and retry counts.
 
-| Workload | Sequential mean success/s | 1 worker | 2 workers | 4 workers |
-| --- | ---: | ---: | ---: | ---: |
-| Alternating checksum/thumbnail | 134.071 | 17.026 | 26.575 | 30.180 |
-| Synthetic 100 ms, 0 iterations | 9.094 | 6.532 | 12.490 | 21.046 |
+The [report](../benchmarks/results/report.md) preserves per-run latency, queue wait, handler duration, failures, retries, recovery, and plots. It also defines throughput boundaries, percentile interpolation, reference limitations, caching effects, and clock resolution. [Metadata](../benchmarks/results/metadata.json) records the environment and reproduction arguments; [summary CSV](../benchmarks/results/summary.csv) and [probe summaries](../benchmarks/results/crash-summary.json) preserve the measurements. The [README](../README.md#measured-results) contains the throughput overview.
 
-These are means of the two per-run throughputs. The realistic queue was slower than the direct reference, and its first four-worker run (25.92 success/s) was slower than the first two-worker run (27.21 success/s). The reference does not perform HTTP, SQLite persistence, or lease coordination. The synthetic workload spends time waiting, so its concurrency benefit is not evidence of CPU-work speedup. Small inputs, warm filesystem caches, and two repetitions limit generalization.
-
-SQLite was 3.53.1. Handler elapsed times use high-resolution `perf_counter`, backed by Windows QueryPerformanceCounter with a reported 100 ns resolution. Submission/completion and queue timestamps use the same machine's wall clock, for which Python reports a 15.625 ms resolution. This limits interpretation of small differences in latency and queue time; the reported clock resolution is not a claim of measurement accuracy. Memory usage was not measured reliably and is not claimed.
-
-The [report](../benchmarks/results/report.md) includes each repetition's latency, queue time, handler duration, failures, retries, recovery, and two SVG plots. The [metadata](../benchmarks/results/metadata.json) records exact reproduction arguments and configuration; [summary CSV](../benchmarks/results/summary.csv) and [probe summaries](../benchmarks/results/crash-summary.json) preserve the compact results. Full raw CSV/JSON and terminal histories are in ignored `benchmarks/runs/verified/`; regenerate them with:
+Benchmark artifacts were retained without changing their measurements. Full raw CSV/JSON and terminal histories are in ignored `benchmarks/runs/verified/`; regenerate them with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m queueworks benchmark --workload all --workers 1 2 4 --jobs 24 --repetitions 2 --warmup 4 --duration-ms 100 --iterations 0 --lease-seconds 1.5 --data-dir data --output-dir benchmarks/runs/verified
 ```
 
-Docker was not installed in this environment. The Dockerfile and Compose configuration are provided but **container execution remains unverified**. Verify locally with `docker compose up --build`, a submission, inspection of terminal results, and `docker compose down`.
+Container execution remains unverified because Docker was unavailable. The [usage reference](usage.md#docker-compose) describes the Compose setup and verification steps.
 
 ## Continuous integration
 

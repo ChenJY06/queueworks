@@ -49,9 +49,8 @@ def _assert_cancelled_and_recover(cluster: ProcessCluster, job_id: str) -> None:
 
 
 def test_worker_request_stop_is_bounded_and_recovers(tmp_path: Path) -> None:
-    # Use the same shutdown request that a signal handler issues. This portable
-    # test checks the cleanup logic on Windows as well as POSIX; HTTP and SQLite
-    # are real and the replacement is a separate worker process.
+    # request_stop exercises signal-handler cleanup on both platforms. The replacement
+    # is a separate process communicating with the real coordinator.
     with ProcessCluster(tmp_path, lease_seconds=5) as cluster:
         worker = Worker(cluster.url, cluster.data_dir, worker_id="graceful", shutdown_timeout=0.8)
         thread = threading.Thread(target=worker.run, daemon=True)

@@ -1,8 +1,7 @@
-"""Repeatable HTTP/process demonstrations and deliberately modest benchmarks.
+"""Process-based crash demonstrations and benchmarks.
 
-The coordinator and workers in these experiments are real child processes. Only
-the coordinator opens the experiment database. Saved evidence is useful both for
-debugging a failure and for checking a benchmark's timing boundaries.
+Only the coordinator opens SQLite. Each run owns its child processes and records
+per-job timings and attempt history.
 """
 
 from __future__ import annotations
@@ -35,7 +34,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def poll_until(condition: Callable[[], Any], *, timeout: float = 20.0, description: str) -> Any:
-    """Bound every asynchronous wait; include the purpose in timeout failures."""
+    """Poll until a condition returns a truthy value or its deadline expires."""
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
@@ -51,15 +50,14 @@ def poll_until(condition: Callable[[], Any], *, timeout: float = 20.0, descripti
 
 
 def _available_port() -> int:
-    # Binding port zero asks the OS for a currently available port. The release
-    # before the subprocess binds is a small unavoidable race, reported by logs.
+    # The port can be taken after this socket closes; startup logs surface bind failures.
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         return int(listener.getsockname()[1])
 
 
 class ProcessCluster:
-    """Own every process/log file and clean them up even when an assertion fails."""
+    """Manage coordinator and worker subprocesses, including failure cleanup."""
 
     def __init__(
         self,
@@ -99,8 +97,7 @@ class ProcessCluster:
         log = (self.directory / f"{name}.log").open("ab", buffering=0)
         self._logs.append(log)
         environment = os.environ.copy()
-        # An unrelated shell's authentication/durability overrides must not
-        # affect these isolated loopback experiments with explicit settings.
+        # Isolate loopback runs from shell authentication and durability overrides.
         environment.pop("QUEUEWORKS_WORKER_KEY", None)
         environment.update(
             {
@@ -306,7 +303,7 @@ def _crash_probe(cluster: ProcessCluster, *, count: int, replace: bool) -> dict[
 
 
 def run_demo(args: Any) -> dict[str, Any]:
-    """Crash a known owner, then save the complete attempt audit as evidence."""
+    """Kill an observed job owner and record recovery and terminal outcomes."""
     from queueworks.handlers import generate_fixtures
 
     _validate_lease(args.lease_seconds)
@@ -325,7 +322,7 @@ def run_demo(args: Any) -> dict[str, Any]:
             evidence = _crash_probe(
                 cluster, count=max(workers, int(getattr(args, "jobs", 9))), replace=False
             )
-            # Copy small diagnostic logs out before the temporary DB is removed.
+            # The run directory is deleted on exit; retain logs with the evidence.
             for log in cluster.directory.glob("*.log"):
                 (output / log.name).write_bytes(log.read_bytes())
     evidence["processes_cleaned_up"] = True
@@ -445,8 +442,7 @@ def _sequential_run(
 
     for index in range(warmup):
         handle(inputs[index % len(inputs)], f"warmup-{index}")
-    # A fixed batch exists at this instant. Sequential latency therefore includes
-    # time waiting for earlier inputs, just as the queue's batch does.
+    # Sequential latency includes waiting behind earlier jobs in the same batch.
     batch_start = time.time()
     monotonic_start = time.perf_counter()
     rows = []
@@ -517,7 +513,7 @@ def _plot(
     metric: str = "completions_per_second",
     title: str = "Successful completions per second (each repetition)",
 ) -> None:
-    """A portable SVG; preserve raw measurements instead of hiding variation."""
+    """Plot each measured repetition as SVG."""
     queue = [row for row in summaries if row["mode"] == "queue"]
     width, height = 780, 390
     margin = 75
@@ -664,8 +660,7 @@ def _report(metadata: dict[str, Any], summaries: list[dict[str, Any]]) -> str:
 
 def _processor_name() -> str:
     if os.name == "nt":
-        # This single read-only registry value gives a CPU model rather than
-        # platform.processor()'s generic Windows architecture/family identifier.
+        # platform.processor() returns a generic architecture identifier on Windows.
         import winreg
 
         try:
@@ -680,7 +675,7 @@ def _processor_name() -> str:
 
 
 def run_benchmark(args: Any) -> dict[str, Any]:
-    """Measure independent fresh databases, preserve raw data, never invent results."""
+    """Run workloads against fresh databases and save raw data, summaries, and plots."""
     from queueworks.handlers import generate_fixtures
 
     _validate_lease(args.lease_seconds)
@@ -811,8 +806,7 @@ def run_benchmark(args: Any) -> dict[str, Any]:
                     f"crash recovery {probe['recovery_seconds']:.3f}s",
                     flush=True,
                 )
-                # Save after each completed run; interrupted experiments retain
-                # real observations and are distinguishable by metadata + rows.
+                # Checkpoint each run so interruption leaves rows and incomplete metadata.
                 for filename, value in [
                     ("metadata.json", metadata),
                     ("summary.json", summaries),

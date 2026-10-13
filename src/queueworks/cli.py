@@ -118,8 +118,6 @@ def main(argv: list[str] | None = None) -> int:
         elif arguments.command in ("demo", "benchmark"):
             from queueworks.experiments import run_benchmark, run_demo
 
-            # The module accepts a namespace to keep the experiment options
-            # visible and readable without a second configuration abstraction.
             arguments.output = arguments.output_dir
             action = run_demo if arguments.command == "demo" else run_benchmark
             action(arguments)

@@ -1,45 +1,35 @@
-# Design and reliability
+# Design
 
-QueueWorks coordinates independent worker processes through HTTP. One coordinator owns a single SQLite database, and workers share a local data directory for the supported demonstration handlers. This architecture is a durable queue on one machine, not a replicated system.
+One FastAPI coordinator owns a local SQLite database. Independent workers communicate with it over HTTP and share the configured fixture/output directory. There are no database replicas or consensus participants.
 
 ## Invariants
 
 1. A job has at most one current running attempt.
-2. Claiming increments the attempt count and creates a unique attempt token in the same transaction.
-3. A worker update is accepted only for the current running attempt, with its current token and an unexpired lease.
-4. Accepted jobs and their committed state changes survive coordinator process restart, subject to SQLite and filesystem durability guarantees.
-5. Handler execution never holds a database transaction open.
-6. Every attempt is retained for audit and timing, including attempts that expire.
+2. A claim increments the attempt count and assigns a unique token in the same transaction as ownership and lease state.
+3. Worker updates require running state, the current token, and an unexpired lease.
+4. Job state, attempt outcomes, and transition events commit together.
+5. Handlers execute outside database transactions.
+6. Terminal jobs cannot accept another completion or return to queued.
 
-An invariant is a rule that every valid operation must preserve. These rules are more useful than treating a status string alone as proof that work is correct.
+## Storage
 
-## Data model
-
-The `jobs` table stores the durable submission and current scheduling state. Its fields include the job ID, supported handler kind, normalized JSON payload, status, attempt count and limit, creation/update/queue/eligibility timestamps, first start and completion timestamps, current worker and attempt token, current lease expiry, result, and error. The optional submission idempotency key has a unique constraint, and canonical submission content enables matching-versus-conflicting reuse.
-
-The `attempts` table records each attempt number, unique token, worker ID, attempt status, the queued/eligible timestamps copied at claim time, start and finish timestamps, lease expiry, handler execution duration, and error. A `(job_id, attempt_no)` primary key gives each claim one audit record. Job-level success is a single state transition even when several earlier attempts ran.
-
-The `events` table stores durable state transitions with a global sequence, job ID, coordinator timestamp, previous/new status, attempt number, and reason. Submission, claim, handler failure, lease expiry, and completion generate events in the same transaction as their state change. Heartbeats renew lease timestamps without adding a status-transition event.
-
-| Table | Key and constraints | Main stored information |
+| Table | Constraints | Stored state |
 | --- | --- | --- |
-| `jobs` | `id` primary key; unique optional idempotency key; status and attempt-count checks | Submission JSON, canonical content, current status/lease/result, scheduling timestamps. |
-| `attempts` | `(job_id, attempt_no)` primary key; unique token; job foreign key; attempt-status check | Owner, scheduling snapshots, lease, start/finish, execution milliseconds, error. |
-| `events` | Incrementing `sequence` primary key; job foreign key | Old/new state, reason, attempt number, timestamp. |
+| `jobs` | Job ID primary key; unique optional idempotency key; valid status and bounded attempt count; token and lease present exactly when running. | Normalized submission, canonical content, scheduling timestamps, current ownership, result, and error. |
+| `attempts` | `(job_id, attempt_no)` primary key; unique token; job foreign key; valid attempt status. | Worker, queued/eligible snapshots, start/finish times, lease deadline, execution duration, and error. |
+| `events` | Increasing sequence primary key; job foreign key. | Timestamp, old/new state, attempt number, and transition reason. |
 
-SQLite stores JSON as `TEXT` and timestamps/durations as `REAL`. Check constraints require a token and lease expiry precisely when the job is running. Foreign keys are enabled on every connection. `PRAGMA user_version = 1` identifies this initial schema; unsupported schema versions are rejected rather than guessed at. Public job responses include attempts and events but omit canonical submission content, idempotency keys, and attempt tokens.
+JSON is stored as `TEXT`; timestamps and durations use `REAL`. Public responses omit tokens, idempotency keys, and canonical content. Read transactions keep the current job, attempts, and events in one snapshot. Heartbeats persist renewed deadlines without adding a state-transition event.
 
-Timestamps use UTC Unix seconds. The coordinator owns scheduling time. Tests can replace its time source to exercise lease boundaries without waiting for real seconds. The worker measures handler duration with a monotonic clock, which is appropriate for elapsed execution time.
-
-Indexes support selecting eligible queued jobs, finding running jobs with expired leases, and reading a job's events in sequence. Transactions update the current job, attempt history, and events together. Read transactions keep each inspected job and its history in a coherent database snapshot.
+Indexes cover eligible jobs, expired running leases, and per-job event history. `PRAGMA user_version = 1` identifies the schema; unsupported versions fail startup.
 
 ## State transitions
 
 ```mermaid
 stateDiagram-v2
-    [*] --> queued: validated submission
-    queued --> running: atomic claim / new attempt token
-    running --> running: valid heartbeat / renew lease
+    [*] --> queued: accepted submission
+    queued --> running: claim / new token
+    running --> running: heartbeat / renew lease
     running --> succeeded: valid completion
     running --> queued: failure or expiry / attempts remain
     running --> failed: failure or expiry / limit reached
@@ -47,93 +37,69 @@ stateDiagram-v2
     failed --> [*]
 ```
 
-`queued` means eligible for future claiming once `eligible_at <= now`. Retrying does not require a separate retrying state. `running` means the coordinator has granted a lease for one attempt, not that it can prove the worker is alive. `succeeded` and `failed` are terminal.
+Queued jobs can be claimed once `eligible_at <= now`. Running means a lease has been granted, not that the worker is known to be alive. `succeeded` and `failed` are terminal.
 
-Attempt states record outcomes separately: an attempt may succeed, fail, or expire. An expired attempt followed by success is two executions and one successful job transition. The job's attempt count increases only on a successful claim, not on every poll or heartbeat.
+Attempt outcomes are recorded separately as `running`, `succeeded`, `failed`, or `expired`. The count increases at claim time, so two attempts do not prove two completed handler executions. An expired attempt followed by a successful retry produces one successful job transition.
 
-## Atomic claiming and concurrent workers
+## Claims and transactions
 
-A claim begins a short `BEGIN IMMEDIATE` write transaction. It reclaims expired work, selects an eligible queued job deterministically, creates the attempt token and audit record, and changes the job to running. It then commits before returning the job to the worker.
+`Store.claim()` takes a `BEGIN IMMEDIATE` write reservation before reading candidates. It reaps expired work, selects the earliest eligible job ordered by eligibility, creation time, and ID, then commits the new token, owner, lease, attempt record, and running transition. Simultaneous claim transactions serialize and cannot act on the same queued state.
 
-SQLite allows one writer at a time. `BEGIN IMMEDIATE` obtains the write reservation before reading candidates, so two simultaneous claim transactions cannot both act on the same queued state. Another writer waits up to the configured busy timeout. This trades serialized, short claim operations for a straightforward invariant. It is intentionally more readable than coordinating execution in a database transaction.
+Submission idempotency uses the same transaction pattern: compare canonical kind, validated payload, and attempt limit, then either return the existing job or insert a new one. The key has a database uniqueness constraint. Conflicting reuse returns HTTP 409. Matching reuse still returns the original job if its fixture has since disappeared.
 
-Polling workers may receive no job. Empty claims are normal, and workers wait before polling again rather than busy-spinning. HTTP is the sole worker/coordinator protocol; workers do not open SQLite connections.
+Each coordinator operation opens its own configured connection. Transactions close before worker execution or HTTP response handling. Empty claims return `job: null`, and workers wait before polling again.
 
-## Leases and fencing
+## Leases and stale updates
 
-A claim grants a lease that expires at a coordinator timestamp. A valid heartbeat extends it. The heartbeat runs separately from the handler, so a long task does not prevent renewal. This also means a process that is alive but cannot reach the coordinator can lose its lease.
+The coordinator schedules leases using its wall clock. Workers maintain a conservative local deadline with `time.monotonic()`, starting each budget when the request begins. This avoids assuming clock agreement and includes request latency in the budget.
 
-Every heartbeat, completion, and failure checks all three conditions: the job is running, the token is the current token, and the lease has not expired. Expiry is strict: reaching the lease deadline invalidates the update, even if the periodic reaper has not run yet. Invalid or obsolete updates receive HTTP 409.
+The worker runs the handler and heartbeat loop in separate threads with separate HTTP clients. A heartbeat extends the lease only while the current attempt is still running and unexpired. A lost renewal response leaves the worker's previous local deadline unchanged.
 
-Consider worker A claiming attempt 1 and then losing contact. After expiry, the coordinator schedules another attempt and worker B claims attempt 2. A may later send a result, but its token does not match attempt 2. The database rejects A's result. A cannot renew B's lease or overwrite B's result.
+`Store._active()` checks state, token, and `lease_expires_at > now` inside the write transaction. Heartbeat, completion, and failure call it after reaping expired attempts. An update at the exact deadline is stale, even before a periodic reaper tick. Stale updates return HTTP 409; the expiry transition commits before that rejection is raised.
 
-Attempt tokens fence database transitions. They do not fence every possible side effect of a handler. If A wrote to an external service before losing contact, rejecting its completion does not roll back that write. Such handlers would need an idempotency key or fencing mechanism understood by the external service.
+For example, worker A loses contact on attempt 1. After expiry, worker B claims attempt 2 with a different token. A can no longer renew the lease, complete the job, or report a failure. Tokens protect database state; they do not undo side effects already performed by A.
 
-## Failure, backoff, and recovery
+## Retries and delivery semantics
 
-For an attempt number `n`, retry delay is capped exponential backoff:
+A failed or expired attempt is queued again only while `attempt_count < max_attempts`. Retry eligibility uses:
 
 ```text
-delay = min(retry_cap_seconds, retry_base_seconds * 2 ** (n - 1))
+delay = min(retry_cap_seconds, retry_base_seconds * 2 ** (attempt_count - 1))
 eligible_at = now + delay
 ```
 
-A failed or expired running attempt returns to queued if the attempt count is below `max_attempts`. Otherwise the job becomes failed. No infinite retry loop exists. Backoff reduces immediate repeated failures; it does not make a deterministic bad input become valid.
+At the attempt limit, failure or expiry makes the job terminally failed. Backoff delays repeated failures but does not fix invalid input or guarantee eventual success.
 
-The reaper runs when the coordinator starts, periodically, and before relevant claim/update operations. On restart, durable running attempts retain their leases. Expired attempts are reclaimed; unexpired attempts remain running until renewed, completed, failed, or expired. The database is the source of truth, so coordinator process memory is not needed to recover accepted jobs.
+A worker can finish a handler and disappear before its completion reaches the coordinator. The coordinator may retry that work. Matching submission keys prevent duplicate accepted jobs from client retries; attempt tokens reject obsolete updates. Neither supplies a universal exactly-once execution guarantee.
 
-## Graceful shutdown and hard crashes
+## Shutdown and recovery
 
-On graceful termination, a worker stops claiming work and tries bounded cleanup for its current attempt. It can report an interrupted attempt as failed, letting normal retry policy apply. Cancellation and cleanup are cooperative: an in-progress operation may finish a local side effect before it stops. A shutdown deadline prevents a hung handler or network request from keeping the worker alive indefinitely.
+The coordinator reaps expired attempts at startup, periodically, and during claims and worker updates. Restarting with the same database preserves terminal results, queued jobs, and existing leases. Unexpired attempts can still renew or complete; expired ones retry or fail at their limit.
 
-A hard kill bypasses the worker's cleanup code. The job stays running until the lease expires. Recovery latency therefore includes the remaining lease duration, reaper scheduling, retry backoff, a new worker's claim delay, and the retry's handler duration. Shorter leases can improve recovery time but increase false expiry risk under scheduling delays or network pauses.
+Graceful worker shutdown stops claims, requests cooperative cancellation, and attempts to report interruption as a failure within a cleanup budget. If a handler does not stop, the worker stops claiming rather than overlapping it with another job. CLI handler threads are daemons, allowing process exit. If acknowledgement fails or the process is killed, lease expiry supplies recovery.
 
-The crash demo selects a worker only after observing that it owns a running job. Integration tests use the same principle and deadlines. Merely sleeping and killing an arbitrary process would not prove the recovery path was exercised.
+Recovery time includes the remaining lease, reaper scheduling, backoff, claim delay, backlog, and retry execution. Short leases recover faster but tolerate less scheduling delay. The crash demo observes a live owner before killing it and checks terminal outcomes; recorded timings are in [verification](verification.md#crash-demonstration).
 
-## Submission idempotency
+## Handler and filesystem boundaries
 
-Without an idempotency key, two successful submissions create two jobs. With a key, a canonical representation of the handler kind, validated payload, and attempt limit is stored alongside a unique key. The uniqueness check and job insertion occur atomically.
+Only checksum, thumbnail, and bounded synthetic payloads are accepted. File paths must be relative to `fixtures/`, exist at first acceptance, and resolve within the data directory. Workers repeat containment checks. No job accepts executable code, shell commands, or URLs.
 
-Matching reuse returns the original job even if its state changed after submission. Reusing the key with different content returns HTTP 409. Concurrent requests with the same key cannot both insert a new job. This protects the submission boundary from client retries; it does not remove repeated handler execution after worker failures.
+Checksums are deterministic reads. Thumbnails write an attempt-specific temporary file, then use `os.replace` for the job's stable output path. The destination path is retained rather than replaced with its resolved target, so replacing a symlink does not overwrite its target. Repeated attempts produce identical output only while fixture bytes and payloads remain unchanged.
 
-## Handler safety and filesystem boundaries
+File replacement and database completion are separate operations. A stale worker may publish a file even though its completion is rejected. Deterministic output makes that safe for these handlers, but other side effects need their own idempotency or fencing. Thumbnail publication does not explicitly fsync the file or directory, so its power-loss durability differs from committed database state.
 
-The accepted handler set is fixed. Payload validation restricts inputs; there is no arbitrary code, command execution, URL fetch, or unrestricted filesystem job. Input paths are resolved within the configured data directory and restricted to the fixtures area. Absolute paths and traversal outside the permitted directory are rejected. Fixtures must already exist when a new file job is accepted. An idempotent replay returns its original job even if that fixture has subsequently disappeared. Workers repeat containment/existence checks rather than trusting a path merely because it arrived over HTTP.
+Synthetic handlers run bounded integer iterations, then wait for any remaining requested duration. `duration_ms` is a minimum measured from handler start; CPU work that exceeds it does not incur an additional full wait. Failure injection applies to the configured initial attempts. [Payload bounds](usage.md#http-api) are shared by HTTP submissions and the benchmark's sequential reference.
 
-Checksums read supported fixture files and return deterministic digests. Thumbnails use fixed validated dimensions and deterministic input data. Each attempt writes an attempt-specific temporary file and atomically replaces the job's final thumbnail path. A repeated attempt therefore produces the same intended final content and avoids leaving a partially written final image.
+## SQLite and durability
 
-Atomic replacement protects file completeness. It is not a distributed transaction with the SQLite completion update. The file may exist even if a worker crashes before reporting success. The next attempt safely repeats the operation. An obsolete attempt may also complete filesystem work after losing its lease; deterministic output makes that acceptable for these built-in samples.
+- **WAL:** permits reader/writer overlap while retaining one writer. Store the database and live WAL sidecars on a suitable local filesystem.
+- **`synchronous=FULL`:** synchronizes commits for stronger power-loss durability than `NORMAL`, at additional write cost. Filesystem, OS, and hardware behavior still affect guarantees.
+- **Busy timeout:** bounds waiting for a write reservation. SQLite lock failures become HTTP 503; the worker's lease budget still applies while requests wait.
+- **Short transactions:** include scheduling and audit changes together, with no handler execution or network call inside them.
+- **Connection settings:** foreign keys, busy timeout, and synchronous mode are set per connection. Startup enables WAL and checks the schema version.
 
-Repeatability assumes the fixture bytes and job payload stay unchanged between attempts. Keep fixtures immutable while jobs use them. Thumbnail publication does not explicitly fsync the file or its directory, so atomic replacement does not promise that the output file survives sudden power loss. The queue's committed result/state and the local output artifact have separate durability boundaries.
-
-Synthetic work is bounded and configurable for experiments, including a controlled number of initial failed attempts. `duration_ms` is a minimum duration from handler start; integer-loop iterations run first, then any remaining duration is waited cooperatively. CPU work that already exceeds the requested duration does not add the full duration again. Sleep-heavy runs demonstrate concurrency and queue overhead. CPU-heavy iterations exercise a different bottleneck; label the workload rather than treating all synthetic runs as representative application work.
-
-## SQLite choices
-
-- **WAL:** writes append to the write-ahead log, allowing readers to coexist with a writer. SQLite still has one writer. The database, WAL, and shared-memory files belong on a local filesystem suitable for SQLite.
-- **`synchronous=FULL`:** requests stronger commit durability than `NORMAL`, at the cost of more synchronization work. The filesystem, OS, hardware, and storage device still determine real power-loss guarantees. WAL must be retained with its database while live.
-- **Busy timeout:** a bounded wait handles brief lock contention. It cannot make arbitrarily long transactions acceptable or eliminate all busy errors.
-- **Short explicit write transactions:** claiming, idempotency, and state transitions use `BEGIN IMMEDIATE`; handler execution and network calls occur outside transactions.
-- **Per-operation connections:** coordinator operations configure SQLite connections consistently and avoid sharing a mutable connection across unrelated request threads.
-
-QueueWorks intentionally uses a single coordinator process. Uvicorn replication, network filesystem database sharing, or independent SQLite replicas would require a separately designed deployment and are outside version one.
-
-The underlying behavior is described in SQLite's primary documentation: [WAL concurrency and synchronization](https://www.sqlite.org/wal.html), [synchronous and busy-timeout pragmas](https://www.sqlite.org/pragma.html), and [transaction modes](https://www.sqlite.org/lang_transaction.html).
+SQLite documents [WAL](https://www.sqlite.org/wal.html), [pragmas](https://www.sqlite.org/pragma.html), and [transaction modes](https://www.sqlite.org/lang_transaction.html). Running additional coordinators or sharing the database across hosts is outside the supported deployment.
 
 ## HTTP trust boundary
 
-The public API is intended for a local demonstration. Internal endpoints can require the optional `X-Worker-Key` shared secret. Workers must provide the same configured key. This key identifies trusted worker clients as a group; it is not individual worker identity, tenant authorization, TLS, or a production secret-management system.
-
-Worker IDs help audit and demonstrate ownership. A unique token authorizes only the active attempt and is more important than trusting a claimed worker ID.
-
-## Timing and benchmark interpretation
-
-Submission-to-completion latency begins immediately before the client's submission HTTP request and ends at the persisted coordinator completion timestamp. This includes submission overhead. Client and coordinator run on the same machine in these experiments, so their wall timestamps share a clock. Queue waiting time uses persisted creation→first start and previous attempt finish→next start intervals, including eligibility/backoff periods. Handler execution time is the sum of worker-measured handler durations recorded for attempts where those measurements reached the coordinator. A hard-crashed attempt may have no measured execution duration, so an absent duration is not zero CPU usage.
-
-Successful throughput is terminal successes divided by the interval from the first client submission start to the final stored completion in that measured batch. Worker startup and excluded warm-up happen first. Failures and retries accompany throughput; a run that abandons jobs is not a valid throughput improvement. A separate crash probe begins at injected process termination and ends when the selected job is durably succeeded; the probe requires all accepted probe jobs to succeed. The one-worker benchmark starts a replacement after the kill so recovery can occur. Probe jobs do not contribute to the workload's throughput, failures, or retry count.
-
-The sequential reference executes the same handler workload without HTTP, persistence, leases, or workers. Comparing it to the queue shows the total cost of the queue's reliability and process machinery alongside any concurrency benefit. Warm caches, small inputs, worker startup, Python interpreter overhead, and SQLite synchronization can dominate a small run. Results must include configuration and unfavorable outcomes.
-
-## Future work
-
-Useful next experiments include keyset pagination, retention of old attempt records, jittered retry delays, explicit cancellation, larger fixture sets, richer metrics, and bounded queue admission. A move to a server database would address different write concurrency and deployment needs; it would not automatically supply exactly-once side effects or replication correctness.
+Internal endpoints can require `X-Worker-Key`. The key authenticates trusted workers as a group, not individual identities or tenants. Worker IDs are audit labels; the attempt token authorizes an active update. Public API authorization and TLS are not implemented. Configuration is in the [usage reference](usage.md#configuration).

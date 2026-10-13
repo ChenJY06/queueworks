@@ -1,4 +1,4 @@
-"""Helpers intentionally exercise the installed CLI and real HTTP coordinator."""
+"""Shared subprocess and polling helpers for HTTP integration tests."""
 
 from queueworks.experiments import ProcessCluster, poll_until
 

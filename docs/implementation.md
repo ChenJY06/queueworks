@@ -1,48 +1,37 @@
 # Implementation
 
-QueueWorks separates durable scheduling from task execution. The coordinator owns SQLite and exposes the HTTP API; workers execute supported handlers and report outcomes through a token-fenced protocol.
+## Source map
 
-## Source modules
-
-| Module | Responsibility |
+| Module | Main responsibilities |
 | --- | --- |
-| `src/queueworks/models.py` | Submission validation and worker protocol messages. |
-| `src/queueworks/config.py` | Coordinator settings and environment configuration. |
-| `src/queueworks/store.py` | Schema, transactions, atomic claims, retries, and attempt history. |
-| `src/queueworks/api.py` | HTTP endpoints, readiness, and background lease recovery. |
-| `src/queueworks/worker.py` | Claim loop, heartbeat renewal, execution, and bounded shutdown. |
-| `src/queueworks/handlers.py` | File checksums, image thumbnails, synthetic work, and fixtures. |
-| `src/queueworks/cli.py` | Coordinator, worker, submission, inspection, and experiment commands. |
-| `src/queueworks/experiments.py` | Process lifecycle, crash injection, benchmarks, and reports. |
+| `src/queueworks/models.py` | Payload validation and worker request models. |
+| `src/queueworks/config.py` | Settings and environment parsing. |
+| `src/queueworks/store.py` | Schema, transactions, claims, lease checks, retries, and audit history. |
+| `src/queueworks/api.py` | HTTP endpoints, readiness, and lease-reaper lifecycle. |
+| `src/queueworks/worker.py` | Worker loop, handler/heartbeat threads, acknowledgement, and shutdown. |
+| `src/queueworks/handlers.py` | Supported handlers and deterministic fixture generation. |
+| `src/queueworks/cli.py` | CLI arguments and command dispatch. |
+| `src/queueworks/experiments.py` | Subprocess management, crash injection, metrics, and reports. |
 
-## Submission and claiming
+## A job through the code
 
-`POST /jobs` validates the handler kind, payload, and attempt limit before accepting a job. File inputs must exist beneath the configured fixture directory. The coordinator stores the normalized submission and its initial queued state in one transaction.
+1. **Validate.** `JobSubmit.validate_handler()` selects the handler-specific model and fills payload defaults. The `/jobs` endpoint resolves file inputs. `Store.submit()` performs that file check only for a new submission, after checking any idempotency key.
+2. **Persist.** `Store.submit()` writes the queued job and submission event. `_record()` builds public responses from the job, attempts, and events while omitting private tokens and submission-key details.
+3. **Claim.** `Worker.run()` posts its ID to `/internal/claim`. `Store.claim()` reaps expired leases, selects eligible work, and commits ownership and attempt state before returning the token.
+4. **Execute.** `Worker._run_attempt()` starts the handler and heartbeat threads. `execute()` dispatches the fixed handler set; a cancellation event is checked during checksum chunks, synthetic work, and thumbnail publication.
+5. **Renew.** The heartbeat client posts the token independently of execution. `Store.heartbeat()` checks `_active()` before extending both job and attempt deadlines.
+6. **Finish.** The worker sends result or error with elapsed handler milliseconds. `Store.finish()` checks the active lease, records the attempt outcome, and commits success or calls `_retry()`. A lost acknowledgement is logged without retrying that acknowledgement.
+7. **Recover.** `create_app()` starts a periodic reaper through FastAPI's lifespan hook. `Store.initialize()` also reaps on startup. Expired work follows the same retry policy as explicit failures.
 
-An optional idempotency key identifies repeated submissions. Matching normalized content returns the existing job; changed content produces HTTP 409. The key check and insertion are serialized in the same SQLite write transaction.
+The [design document](design.md) defines transaction boundaries, exact expiry behavior, and delivery semantics. The [usage reference](usage.md) defines HTTP request/response shapes.
 
-A claim uses `BEGIN IMMEDIATE` before selecting an eligible job. It increments the attempt count, assigns a unique token and lease deadline, creates the attempt record, and changes the job to running. The transaction commits before the HTTP response reaches the worker. Competing claims therefore observe committed ownership rather than independently selecting the same queued state.
+## Tests and experiments
 
-## Execution and lease renewal
+| File | Coverage |
+| --- | --- |
+| `tests/test_api.py` | Validation, pagination, concurrent idempotency, controlled-time leases, retries, stale updates, and durable state. |
+| `tests/test_handlers.py` | Fixture/output repeatability, path containment, and cancellation. |
+| `tests/test_worker.py` | Bounded cancellation and platform-specific graceful shutdown. |
+| `tests/test_process_integration.py` | Independent HTTP workers, concurrent claims, long-handler renewal, retries, hard termination, and coordinator restart. |
 
-Handlers run outside database transactions. The worker uses separate execution and heartbeat threads, with independent HTTP clients, so long-running tasks can retain their leases. The coordinator owns scheduling time; the worker uses monotonic deadlines for its local lease budget and `perf_counter` for execution-duration measurements.
-
-Every heartbeat, completion, and failure checks running state, the current attempt token, and an unexpired deadline. An obsolete attempt receives HTTP 409 even if the periodic reaper has not yet processed its expiry.
-
-## Failure recovery
-
-A failed or expired attempt returns to queued with capped exponential backoff when attempts remain. Otherwise, the job reaches the terminal failed state. The coordinator checks expiry at startup, periodically, and during worker protocol operations, allowing the same database to recover after a restart.
-
-Graceful worker shutdown stops claims and cooperatively cancels active execution within a bounded cleanup budget. A hard process kill bypasses cleanup; its lease must expire before reassignment. Durable attempt records distinguish interrupted execution from a later successful transition.
-
-## Repeatable output
-
-Checksum jobs return deterministic SHA-256 digests. Thumbnail attempts write unique temporary files and atomically replace a stable output path. Repeatability assumes immutable fixture bytes and unchanged payloads. File publication and SQLite completion are separate operations, so retries may repeat work after an acknowledgement is lost.
-
-## Verification and measurement
-
-API tests exercise real SQLite with a controllable scheduling clock. Process integration tests run the coordinator and independent workers over HTTP, including simultaneous claims, heartbeats, retries, restart, graceful shutdown, and hard termination.
-
-Benchmarks separate submission-to-completion latency, queue residence, and handler execution time. Raw records preserve attempt history, failures, retries, and missing execution measurements from killed processes. The direct sequential reference uses the same handlers without HTTP or persistence; its reliability guarantees differ from the queue. Full methodology and observations are in the [benchmark report](../benchmarks/results/report.md).
-
-The [design document](design.md) defines the invariants and storage trade-offs. The [verification record](verification.md) records executed checks and recovery evidence.
+`ProcessCluster` owns subprocesses and logs and cleans them up on context exit. `poll_until()` gives state-based waits a deadline. `_crash_probe()` selects a running job with a live owner, kills that process, and checks terminal outcomes and successful transition counts. Benchmarks use fresh databases per configuration and save per-job rows and attempt histories. The [report](../benchmarks/results/report.md) defines timing boundaries and the sequential comparison.

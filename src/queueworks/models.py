@@ -1,4 +1,4 @@
-"""Validation for the small, closed set of supported jobs and worker messages."""
+"""Validation for supported job payloads and worker messages."""
 
 from pathlib import PurePosixPath
 from typing import Literal

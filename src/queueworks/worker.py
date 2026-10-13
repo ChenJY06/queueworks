@@ -1,8 +1,4 @@
-"""Independent HTTP worker with a separate heartbeat thread.
-
-Only the coordinator knows SQLite exists. A lease is permission to report one
-attempt's result, not an exactly-once guarantee for the handler's side effects.
-"""
+"""HTTP worker with concurrent heartbeat renewal and bounded shutdown."""
 
 from __future__ import annotations
 
@@ -25,7 +21,7 @@ def _log(event: str, worker_id: str, **details: Any) -> None:
 
 
 class Worker:
-    """Claim, run, and acknowledge jobs until a shutdown signal is received."""
+    """Execute one job at a time while a separate thread renews its lease."""
 
     def __init__(
         self,
@@ -111,12 +107,11 @@ class Worker:
         heartbeat_stop = threading.Event()
         finished = threading.Event()
         deadline_lock = threading.Lock()
-        # Starting the budget at the request start is conservative: coordinator
-        # time is never assumed to agree with this machine's wall clock.
+        # Include request latency in the lease budget without assuming clock agreement.
         deadline = [claimed_at + lease_seconds]
         outcome: dict[str, Any] = {}
-        # perf_counter provides finer duration resolution on Windows Python
-        # 3.11/3.12; monotonic remains the independent lease/shutdown clock.
+        # Avoid coarse handler timings on Windows Python 3.11/3.12.
+        # Lease and shutdown deadlines remain on the monotonic clock.
         execution_started = time.perf_counter()
         cleanup_deadline: float | None = None
 
@@ -152,9 +147,8 @@ class Worker:
                             deadline[0] = renewal_started + renewed_seconds
                         interval = max(0.02, renewed_seconds / 3)
                     except (httpx.HTTPError, ValueError, KeyError):
-                        # A lost response does not prove the renewal failed. It
-                        # also does not prove it succeeded, so retain the old
-                        # deadline and retry only while that budget remains.
+                        # Without a renewal response, keep the previous deadline:
+                        # the coordinator may have renewed, but this worker cannot assume so.
                         interval = min(interval, 0.1)
 
         def run_handler() -> None:
@@ -192,8 +186,8 @@ class Worker:
                     cleanup_deadline = time.monotonic() + self.shutdown_timeout
                     finished.wait(max(0, self.shutdown_timeout - self.request_timeout))
                     if not finished.is_set():
-                        # Python cannot safely kill an arbitrary thread. Exit
-                        # this process instead of starting overlapping work.
+                        # Threads cannot be forcibly cancelled; stop claims
+                        # if the handler outlives its cleanup budget.
                         self.stop.set()
                     if self.stop.is_set():
                         outcome["error"] = f"{HandlerCancelled.__name__}: worker shutting down"
@@ -215,9 +209,8 @@ class Worker:
             else:
                 payload["result"] = outcome["result"]
             try:
-                # No acknowledgement retry here: if the response is lost, the
-                # job may already have committed. Polling/recovery is the source
-                # of truth; a new attempt will be fenced by a different token.
+                # A lost response may follow a committed result. Do not retry the
+                # acknowledgement; unresolved attempts recover through lease expiry.
                 acknowledgement_timeout = self.request_timeout
                 if cleanup_deadline is not None:
                     acknowledgement_timeout = min(

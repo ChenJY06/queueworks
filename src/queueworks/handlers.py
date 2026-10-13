@@ -1,8 +1,6 @@
-"""Small, repeatable handlers that operate only on the shared demo directory.
+"""Repeatable handlers restricted to the configured fixture and output directory.
 
-The coordinator validates payloads before accepting jobs. These extra path checks
-are still necessary: workers are separate processes and must not trust a path
-merely because it arrived over HTTP.
+Workers recheck path containment independently of coordinator validation.
 """
 
 from __future__ import annotations
@@ -70,7 +68,7 @@ def _checksum(path: Path, cancel: threading.Event) -> tuple[str, int]:
 
 
 def generate_fixtures(data_dir: Path) -> dict[str, str]:
-    """Create deterministic, modest fixtures; repeated calls produce the same bytes."""
+    """Generate the same binary, text, and PNG fixture bytes on repeated calls."""
     root = Path(data_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     fixtures = _inside(root, root / "fixtures")
@@ -82,8 +80,7 @@ def generate_fixtures(data_dir: Path) -> dict[str, str]:
             output.write(block)
     text = _inside(root, fixtures / "sample.txt")
     text.write_bytes(b"QueueWorks: durable jobs, explicit leases, repeatable handlers.\n" * 128)
-    # A generated pattern avoids external downloads and contains enough detail
-    # for a thumbnail to show an actual image transformation.
+    # Generate image detail without downloads or random input.
     pixels = bytes(
         component
         for y in range(768)
@@ -110,7 +107,7 @@ def execute(
     token: str,
     cancel: threading.Event,
 ) -> dict[str, Any]:
-    """Execute one attempt without accessing SQLite or trusting executable input."""
+    """Execute a supported handler against the configured data directory."""
     _check_cancel(cancel)
     if kind == "checksum":
         digest, size = _checksum(_fixture_path(Path(data_dir), payload["path"]), cancel)
@@ -126,10 +123,8 @@ def execute(
         output_dir.mkdir(parents=True, exist_ok=True)
         destination = output_dir / f"{job_id}.png"
         _inside(root, destination)
-        # Keep the final path itself: os.replace replaces an existing symlink
-        # instead of following it and overwriting a different fixture file.
-        # Each attempt has a unique temporary file. A stale worker cannot expose
-        # a partial PNG, and repeated attempts publish identical final content.
+        # Retain the destination path: os.replace replaces a symlink rather than its target.
+        # Unique temporary files prevent partial output; retries need immutable fixtures.
         token_tag = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
         with tempfile.NamedTemporaryFile(
             dir=output_dir,
